@@ -1,24 +1,51 @@
-gridge <- function(x, rho=0, v=NULL, thetas=NULL, u=NULL){
-  x <- x/sqrt(nrow(x)-1)
+gridge <- function(x, rho=0, v=NULL, thetas=NULL){
   p <- 2*rho
-  if(is.null(v)||is.null(thetas)||is.null(u)){
+  if(is.null(v)||is.null(thetas)){
+    x <- x/sqrt(nrow(x)-1)
     covarswap <- x%*%t(x)
     eigenswap <- eigen(covarswap)
     keep <- ((eigenswap$values) > 1e-11)
     v <- t(diag(1/sqrt(eigenswap$values[keep]))%*%t(eigenswap$vectors[,keep])%*%x)
     thetas <- eigenswap$values[keep]
-    u <- eigenswap$vectors[,keep]
   }
   lambda <- sqrt(4*p)/2
   diagmat <- (-lambda+ (-thetas + sqrt(thetas^2 + 4*p))/2)
   dbar <- .5*(thetas+sqrt(thetas^2+4*p))-sqrt(p)
-  return(list(svdstuff=list(u=u, v=v, thetas=thetas), wistuff=list(v=v, firstdiag=(1/sqrt(p)),
-     diagsandwich=(-((1/p)*(1/(1/sqrt(p) + 1/dbar))))), wstuff=list(v=v, firstdiag=lambda,
-     diagsandwich=(thetas+diagmat))))
+  return(list(svdstuff=list(v=v, thetas=thetas), 
+              wistuff=list(v=v, 
+                           firstdiag=(1/sqrt(p)),
+                           diagsandwich=(-((1/p)*(1/(1/sqrt(p) + 1/dbar))))), 
+              wstuff=list(v=v, 
+                          firstdiag=lambda,
+                          diagsandwich=(thetas+diagmat))))
 }
 
+gridge_svd <- function(x, rho=0, v=NULL, thetas=NULL){
+  p <- 2*rho
+  if(is.null(v)||is.null(thetas)){
+    x <- x/sqrt(nrow(x)-1)
+    # Perform SVD on X
+    svd_res <- svd(x)
+    # Get vectors to keep
+    keep <- ((svd_res$d) > 1e-11)
+    # Calculate v
+    v <- t(diag(1 / sqrt(svd_res$d[keep] ^ 2)) %*% t(svd_res$u[,keep]) %*% x)
+    # Store the eigenvalues
+    thetas <- svd_res$d[keep]^2
+  }
+  lambda <- sqrt(4*p)/2
+  diagmat <- (-lambda+ (-thetas + sqrt(thetas^2 + 4*p))/2)
+  dbar <- .5*(thetas+sqrt(thetas^2+4*p))-sqrt(p)
+  return(list(svdstuff=list(v=v, thetas=thetas), 
+              wistuff=list(v=v, 
+                           firstdiag=(1/sqrt(p)),
+                           diagsandwich=(-((1/p)*(1/(1/sqrt(p) + 1/dbar))))), 
+              wstuff=list(v=v, 
+                          firstdiag=lambda,
+                          diagsandwich=(thetas+diagmat))))
+}
 
-scout1something <- function(x, y, p2, lam1s, lam2s, rescale,trace){
+scout1something <- function(x, y, x2, p2, lam1s, lam2s, rescale,trace){
   if(ncol(x)>500) print("You are running scout with p1=1 and ncol(x) > 500. This will be slow. You may want to re-start and use p1=2, which is much faster.")
   if(min(lam1s)==0 && min(lam2s)==0 && ncol(x)>=nrow(x)) stop("don't run w/lam1=0 and lam2=0 when p>=n")
   if(sum(order(lam2s)==(1:length(lam2s)))!=length(lam2s)){
@@ -59,49 +86,69 @@ scout1something <- function(x, y, p2, lam1s, lam2s, rescale,trace){
 }
 
 
-scout2something <- function(x, y, p2, lam1s, lam2s,rescale, trace){
-  if(sum(order(lam2s)==(1:length(lam2s)))!=length(lam2s)){
-    stop("Error!!!! lam2s must be ordered!!!")
-  }
+scout2something <- function(x, y, x2, p2, lam1s, lam2s,rescale, trace, useSVD = FALSE){
+  
+  # Error checking
+  if(sum(order(lam2s)==(1:length(lam2s)))!=length(lam2s)) stop("Error!!!! lam2s must be ordered!!!")
   if(min(lam1s)==0 && min(lam2s)==0 && ncol(x)>=nrow(x)) stop("don't run w/lam1=0 and lam2=0 when p>=n")
+  
+  # Initialize variables
   g.out <- NULL
   betamat <- array(NA, dim=c(length(lam1s), length(lam2s), ncol(x)))
-  for(i in 1:length(lam1s)){
-    if(trace) cat(i,fill=F)
-    if(lam1s[i]!=0){
-      if(i==1 || is.null(g.out)) g.out <- gridge(x, rho=lam1s[i])
-      if(i!=1 && !is.null(g.out)) g.out <- gridge(x, rho=lam1s[i], v=g.out$svdstuff$v, thetas=g.out$svdstuff$thetas, u=g.out$svdstuff$u)
-      for(j in 1:length(lam2s)){
-        if (p2==0){
-          beta <- diag(rep(g.out$wistuff$firstdiag, ncol(x))) %*% cov(x,y) + g.out$wistuff$v %*% (diag(g.out$wistuff$diagsandwich) %*% ((t(g.out$wistuff$v)) %*% cov(x,y)))
-        } else if(p2!=0 && p2==1){
-          if(j==1) beta <- lasso_one(diag(rep(g.out$wstuff$firstdiag, ncol(x))) + g.out$wstuff$v %*% diag(g.out$wstuff$diagsandwich) %*% t(g.out$wstuff$v), cov(x,y), rho=lam2s[j])$beta
-          if(j!=1){
-            if(sum(abs(beta))!=0 || lam2s[j]<lam2s[j-1]){
-              beta <- lasso_one(diag(rep(g.out$wstuff$firstdiag, ncol(x))) + g.out$wstuff$v %*% diag(g.out$wstuff$diagsandwich) %*% t(g.out$wstuff$v), cov(x,y), rho=lam2s[j], beta.init=beta)$beta
-              # If you got zero for a smaller value of
-              # lambda2, then no need to keep computing!!!!!!!
-            }
-          }  
-        }  
-        if(rescale && sum(abs(beta))!=0) beta <- beta*lsfit(x%*%beta,y,intercept=FALSE)$coef
-        betamat[i,j,] <- beta
-      }
-    } else if(lam1s[i]==0){
-      if(p2==0) betamat[i,1,] <- lsfit(x,y,intercept=FALSE)$coef
-      if(p2==1){
-        for(j in 1:length(lam2s)){
-          if(lam2s[j]==0) beta <- lsfit(x,y,intercept=FALSE)$coef
-          if(lam2s[j]!=0) beta <- lasso_one(cov(x),cov(x,y), rho=lam2s[j])$beta
-          if(sum(abs(beta))!=0 && rescale){
-            betamat[i,j,] <- beta*lsfit(x%*%beta,y,intercept=FALSE)$coef
-          } else {
-            betamat[i,j,] <- beta
-          }
-        }
-      }
-    }
+  beta <- NULL
+  
+  # Merge x and x2 if both are supplied
+  if (!is.null(x2)) {
+    x_step_1 <- rbind(x, x2)
+  } else {
+    x_step_1 <- x
   }
+  
+  # Compute early
+  if (useSVD) {
+    if(trace) cat("Using SVD.\n")
+    g.out <- gridge_svd(x_step_1, rho=0)
+  } else {
+    if(trace) cat("Computing eigen decomposition. This may take some time.\n")
+    g.out <- gridge(x_step_1, rho=0)
+  }
+  
+  # Loop through lambda 1
+  for(i in 1:length(lam1s)) {
+    
+    # Report progress
+    if(trace) cat(i,fill=F)
+    
+    # Compute g.out for this lambda
+    g.out <- gridge(x_step_1, rho=lam1s[i], v=g.out$svdstuff$v, thetas=g.out$svdstuff$thetas)
+    
+    # Loop through lambda 2
+    for(j in 1:length(lam2s)) {
+      
+      # If no penalty
+      if (p2==0){
+        beta <- diag(rep(g.out$wistuff$firstdiag, ncol(x))) %*% cov(x,y) + g.out$wistuff$v %*% (diag(g.out$wistuff$diagsandwich) %*% ((t(g.out$wistuff$v)) %*% cov(x,y)))
+      } else if(p2==1) { # If LASSO penalty
+        
+        # Just calculate beta even if already 0. This isn't the slow part!
+        beta <- lasso_one(diag(rep(g.out$wstuff$firstdiag, ncol(x))) + g.out$wstuff$v %*% diag(g.out$wstuff$diagsandwich) %*% t(g.out$wstuff$v), 
+                          ss = cov(x,y), 
+                          rho = lam2s[j], 
+                          beta.init = beta)$beta
+        
+      } 
+      
+      # Rescale if needed
+      if(rescale && sum(abs(beta))!=0) 
+        beta <- beta*lsfit(x%*%beta,y,intercept=FALSE)$coef
+      
+      # Store beta estimates
+      betamat[i,j,] <- beta
+    }
+    
+  }
+  
+  # Return beta estimates
   return(betamat)
 }
 
@@ -125,12 +172,13 @@ predict.scoutobject <- function(object, newx, ...){
    return(yhat)
 }
 
-scout <- function(x, y, newx=NULL, p1=2, p2=1, lam1s=seq(.001,.2,len=10), lam2s=seq(.001,.2,len=10), rescale=TRUE, trace=TRUE, standardize=TRUE){
+scout <- function(x, y, x2=NULL, newx=NULL, p1=2, p2=1, lam1s=seq(.001,.2,len=10), lam2s=seq(.001,.2,len=10), rescale=TRUE, trace=TRUE, standardize=TRUE, useSVD = FALSE){
   call <- match.call()
   if(!is.null(p1) && p1!=1 && p1!=2) stop("p1 must be 1, 2, or NULL.")
   if(!is.null(p2) && p2!=1) stop("p1 must be 1 or NULL.")
  if((sum(is.na(x)) + sum(is.na(y)))>0) stop("Please fix the NAs in your data set first. Missing values can be imputed using library 'impute'.")
  x <- as.matrix(x)
+ if(!is.null(x2)) x2 <- as.matrix(x2)
  if(min(apply(x,2,sd))==0) stop("Please do not enter an x matrix with variables that are constant.")
  # Need to center and scale x,y
  meany <- mean(y)
@@ -139,8 +187,10 @@ scout <- function(x, y, newx=NULL, p1=2, p2=1, lam1s=seq(.001,.2,len=10), lam2s=
    sdy <- sd(y)
    sdx <- apply(x,2,sd)
    x <- scale(x,T,T)
+   if(!is.null(x2)) x2 <- scale(x2,T,T)
  } else {
    x <- scale(x,T,F)
+   if(!is.null(x2)) x2 <- scale(x2,T,F)
    sdx <- rep(1,ncol(x))
    sdy <- 1
  }
@@ -168,31 +218,39 @@ scout <- function(x, y, newx=NULL, p1=2, p2=1, lam1s=seq(.001,.2,len=10), lam2s=
  if(ncol(x) >= nrow(x) && p1==0 && p2==0){
      stop("p1 and p2 cannot both be zero when p>n.")
  }
- if(p1==0){
+ if(p1==0) {
+   # Initialize variables
    betamat <- array(NA,dim=c(1,length(lam2s),ncol(x)))
+   beta <- NULL
    for(j in 1:length(lam2s)){
      if(trace) cat(j,fill=F)
-     if(lam2s[j]==0){
-       if(ncol(x)>=nrow(x)) stop("Cannot do Least Squares when ncol(x)>=nrow(x)")
-       beta <- lsfit(x,y,intercept=FALSE)$coef
-       betamat[1,j,] <- beta
-     } else {
-       if(j==1) beta <- lasso_one(cov(x), cov(x,y), rho=lam2s[j])$beta
-       if(j!=1){
-         if(sum(abs(beta))!=0 || lam2s[j]<lam2s[j-1]){ 
-           beta <- lasso_one(cov(x), cov(x,y), rho=lam2s[j], beta.init=beta)$beta
-                                        # if got zero for smaller value of lambda 2,
-                                        # then no need to keep computing!!!
-         }
-       }
-       if(rescale && sum(abs(beta))!=0) beta <- beta*lsfit(x%*%beta,y,intercept=FALSE)$coef
-       betamat[1,j,] <- beta
+     if(!is.null(beta) && (sum(abs(beta))!=0 || lam2s[j]<lam2s[j-1])) { 
+       beta <- lasso_one(cov(x), cov(x,y), rho=lam2s[j], beta.init=beta)$beta
+       # if got zero for smaller value of lambda 2,
+       # then no need to keep computing!!!
      }
+     if(rescale && sum(abs(beta))!=0) beta <- beta*lsfit(x%*%beta,y,intercept=FALSE)$coef
+     betamat[1,j,] <- beta
    }  
- } else if(p1==1){
-   betamat <- scout1something(x, y, p2, lam1s, lam2s, rescale, trace)
- } else if (p1==2){
-   betamat <- scout2something(x, y, p2, lam1s, lam2s, rescale, trace)
+ } else if(p1==1) {
+   betamat <- scout1something(x = x, 
+                              y = y, 
+                              x2 = x2,
+                              p2 = p2, 
+                              lam1s = lam1s, 
+                              lam2s = lam2s, 
+                              rescale = rescale, 
+                              trace = trace)
+ } else if (p1==2) {
+   betamat <- scout2something(x = x, 
+                              y = y, 
+                              x2 = x2,
+                              p2 = p2, 
+                              lam1s = lam1s, 
+                              lam2s = lam2s, 
+                              rescale = rescale, 
+                              trace = trace,
+                              useSVD = useSVD)
  } 
  interceptmat <- matrix(meany,nrow=length(lam1s),ncol=length(lam2s))
  for(i in 1:length(lam1s)){
@@ -251,7 +309,15 @@ cv.scout <- function(x, y, K = 10, lam1s=seq(0.001,.2,len=10),lam2s=seq(0.001,.2
     for(i in seq(K)) {
      if(trace) cat("\n CV Fold", i, "\t")
       omit <- all.folds[[i]]
-      fit <- scout(x[ - omit,  ], y[ - omit], newx=x[omit,], p1=p1,p2=p2,lam1s=lam1s,lam2s=lam2s,rescale=rescale, trace=trace)
+      fit <- scout(x = x[ - omit,  ], 
+                   y = y[ - omit], 
+                   newx = x[omit,], 
+                   p1 = p1,
+                   p2 = p2,
+                   lam1s = lam1s,
+                   lam2s = lam2s,
+                   rescale = rescale, 
+                   trace = trace)
       residmat[,,i] <- apply((sweep(fit$yhat,3,y[omit],"-"))^2,c(1,2),mean)
     }
     cv <- apply(residmat, c(1,2), mean)
@@ -277,7 +343,13 @@ cv.scout <- function(x, y, K = 10, lam1s=seq(0.001,.2,len=10),lam2s=seq(0.001,.2
     for(i in seq(K)){
       if(trace) cat("\n CV Fold", i, "\t")
       omit <- all.folds[[i]]
-      fit <-  scout(x[ - omit,  ], y[ - omit], newx=x[omit,], p1=p1,p2=p2,lam1s=lam1,lam2s=lam2s)
+      fit <-  scout(x = x[ - omit,  ], 
+                    y = y[ - omit], 
+                    newx = x[omit,],
+                    p1 = p1,
+                    p2 = p2,
+                    lam1s = lam1,
+                    lam2s = lam2s)
       residmat[,i] <- apply(sweep(fit$yhat[1,,],2,y[omit],"-")^2,1,mean)
     }
     cv <- apply(residmat, 1, mean)
@@ -300,7 +372,13 @@ cv.scout <- function(x, y, K = 10, lam1s=seq(0.001,.2,len=10),lam2s=seq(0.001,.2
     for(i in seq(K)){
       if(trace) cat("\n CV Fold", i, "\t")
       omit <- all.folds[[i]]
-      fit <-  scout(x[ - omit,  ], y[ - omit], newx=x[omit,], p1=p1,p2=p2,lam1s=lam1s,lam2s=lam2 )
+      fit <-  scout(x = x[ - omit,  ], 
+                    y = y[ - omit], 
+                    newx = x[omit,], 
+                    p1 = p1,
+                    p2 = p2,
+                    lam1s = lam1s,
+                    lam2s = lam2)
       residmat[,i] <- apply(sweep(fit$yhat[,1,],2,y[omit],"-")^2,1,mean)
     }
     cv <- apply(residmat, 1, mean)
