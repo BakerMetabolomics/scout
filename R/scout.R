@@ -224,11 +224,7 @@ scout <- function(x, y, x2=NULL, newx=NULL, p1=2, p2=1, lam1s=seq(.001,.2,len=10
    beta <- NULL
    for(j in 1:length(lam2s)){
      if(trace) cat(j,fill=F)
-     if(!is.null(beta) && (sum(abs(beta))!=0 || lam2s[j]<lam2s[j-1])) { 
-       beta <- lasso_one(cov(x), cov(x,y), rho=lam2s[j], beta.init=beta)$beta
-       # if got zero for smaller value of lambda 2,
-       # then no need to keep computing!!!
-     }
+     beta <- lasso_one(cov(x), cov(x,y), rho=lam2s[j], beta.init=beta)$beta
      if(rescale && sum(abs(beta))!=0) beta <- beta*lsfit(x%*%beta,y,intercept=FALSE)$coef
      betamat[1,j,] <- beta
    }  
